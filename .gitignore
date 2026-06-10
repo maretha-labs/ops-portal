@@ -1,0 +1,36 @@
+# Terraform
+infra/.terraform/
+infra/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+# saved plans can embed secret values — never commit
+tfplan
+*.tfplan
+*.tfvars
+!*.tfvars.example
+override.tf
+override.tf.json
+
+# Lambda build artifacts
+lambda/**/node_modules/
+lambda/**/*.zip
+*.zip
+
+# Local web config (generated from TF outputs)
+web/config.local.js
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# Secrets — never commit
+.env
+.env.*
+secrets/

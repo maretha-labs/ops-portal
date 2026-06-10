@@ -1,0 +1,14 @@
+{
+  "name": "ops-portal-api",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "ops-portal API Lambda — presign uploads + dispatch GitHub Actions",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.540.0",
+    "@aws-sdk/s3-request-presigner": "^3.540.0",
+    "@aws-sdk/client-ssm": "^3.540.0",
+    "@aws-sdk/client-dynamodb": "^3.540.0",
+    "@aws-sdk/client-cloudwatch-logs": "^3.540.0"
+  }
+}

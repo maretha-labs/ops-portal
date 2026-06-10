@@ -1,0 +1,74 @@
+name: Deploy ops-portal
+
+# Provisions/updates the portal's own AWS stack and publishes the SPA.
+# Runs on GitHub-hosted runners (pure AWS work - NOT your deploy box).
+#
+# In this public mirror the workflow is dispatch-only so a fresh clone doesn't
+# produce a failed run before secrets exist. Once you have set the secrets below,
+# restore the push trigger:
+#   on:
+#     push:
+#       branches: [main]
+#       paths: ["infra/**", "lambda/**", "web/**", ".github/workflows/deploy-portal.yml"]
+#
+# Requires repo secrets:
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY  (a scoped portal-CI IAM principal)
+#   CLOUDFLARE_API_TOKEN                       (Zone:DNS:Edit on your zone)
+#   TF_VAR_cloudflare_zone_id, TF_VAR_google_client_id, TF_VAR_google_client_secret
+# plus TF_VAR_* values (or a committed-free terraform.tfvars) for the required variables:
+#   domain_name, allowed_email_domain, artifacts_bucket_name, github_repo
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+
+      - name: Vendor Lambda deps
+        run: cd lambda/api && npm install --omit=dev --no-audit --no-fund
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform apply
+        working-directory: infra
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TF_VAR_cloudflare_zone_id: ${{ secrets.TF_VAR_cloudflare_zone_id }}
+          TF_VAR_google_client_id: ${{ secrets.TF_VAR_google_client_id }}
+          TF_VAR_google_client_secret: ${{ secrets.TF_VAR_google_client_secret }}
+        run: |
+          terraform init -input=false
+          terraform apply -auto-approve -input=false
+
+      - name: Publish SPA
+        working-directory: infra
+        run: |
+          API=$(terraform output -raw api_base_url)
+          DOMAIN=$(terraform output -raw cognito_hosted_ui_domain)
+          CID=$(terraform output -raw cognito_client_id)
+          URL=$(terraform output -raw portal_url)
+          BUCKET=$(terraform output -raw spa_bucket)
+          DIST=$(terraform output -raw cloudfront_distribution_id)
+          sed -e "s#__API_BASE__#$API#" -e "s#__COGNITO_DOMAIN__#$DOMAIN#" \
+              -e "s#__CLIENT_ID__#$CID#" -e "s#__REDIRECT_URI__#$URL/#" \
+              ../web/config.js > /tmp/config.js
+          aws s3 sync ../web/ s3://$BUCKET/ --exclude config.js --exclude "*.local.js" --delete
+          aws s3 cp /tmp/config.js s3://$BUCKET/config.js --content-type application/javascript
+          aws cloudfront create-invalidation --distribution-id $DIST --paths "/*"

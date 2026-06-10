@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+# The Cloudflare API token is NOT set here - export it instead:
+#   export CLOUDFLARE_API_TOKEN=...        (Zone:DNS:Edit on your zone)
+
+cloudflare_zone_id   = "REPLACE_WITH_YOUR_ZONE_ID"
+
+# From the Google Cloud Console OAuth 2.0 Web client (see SETUP.md):
+google_client_id     = "REPLACE.apps.googleusercontent.com"
+google_client_secret = "REPLACE"
+
+# Yours:
+domain_name           = "ops.example.com"
+allowed_email_domain  = "example.com"
+artifacts_bucket_name = "example-nuxeo-addons"   # S3 bucket names are global - pick your own
+github_repo           = "your-org/your-deploy-repo"
+
+# Optional (Installed panel + Studio version dropdown):
+# nuxeo_url         = "https://nuxeo.example.com/nuxeo"
+# studio_project_id = "your-studio-project"

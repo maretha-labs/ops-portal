@@ -1,0 +1,112 @@
+# demo3 → CloudWatch log shipper (ops-portal Bug #3)
+#
+# A fluent-bit DaemonSet on the demo3 k3s node tails the Nuxeo pod's container
+# log and ships it to the CloudWatch group /nuxeo/demo3 (created by Terraform in
+# ops-portal/infra/logs.tf). The portal's GET /logs route reads that group.
+#
+# Apply on the box (see box/logging/README.md for the full runbook):
+#   kubectl create ns logging --dry-run=client -o yaml | kubectl apply -f -
+#   kubectl -n logging create secret generic fluent-bit-aws \
+#     --from-literal=AWS_ACCESS_KEY_ID=<log_shipper_access_key_id> \
+#     --from-literal=AWS_SECRET_ACCESS_KEY=<log_shipper_secret_access_key>
+#   kubectl apply -f fluent-bit.yaml
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: logging
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: logging
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         5
+        Log_Level     info
+        Daemon        off
+        Parsers_File  /fluent-bit/etc/parsers.conf
+        HTTP_Server   Off
+
+    # Tail ONLY the Nuxeo pod's container log (namespace=nuxeo, pod starts "nuxeo-").
+    # k3s/containerd writes the CRI log format; the built-in "cri" multiline parser
+    # reassembles wrapped lines + Java stack traces into single events.
+    [INPUT]
+        Name              tail
+        Tag               nuxeo.*
+        # Main Nuxeo container only (…_nuxeo_nuxeo-…), not the init containers.
+        Path              /var/log/containers/nuxeo-*_nuxeo_nuxeo-*.log
+        # Plain tail — NO multiline parser. The cri multiline parser buffers the
+        # whole file on a bulk head-read and flushes nondeterministically when the
+        # server is idle (we saw 71/2/1/0 lines across identical resets). Plain
+        # tail emits every line immediately; we ship the raw CRI line and strip its
+        # "<ts> stdout F " prefix in the API Lambda's /logs route.
+        Read_from_Head    On
+        Mem_Buf_Limit     10MB
+        Skip_Long_Lines   On
+        Refresh_Interval  10
+        DB                /flb-state/flb-nuxeo.db
+
+    [OUTPUT]
+        Name                cloudwatch_logs
+        Match               nuxeo.*
+        region              ${AWS_REGION}
+        log_group_name      /nuxeo/demo3
+        log_stream_prefix   demo3-
+        auto_create_group   false
+        # NB: we deliberately do NOT set log_key — it makes the cloudwatch output
+        # drop any record missing that key (e.g. entrypoint/banner lines), losing
+        # most of the log. We ship the full CRI record ({time,stream,_p,log}) and
+        # unwrap the `log` field in the API Lambda's /logs route instead.
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: logging
+  labels: { app: fluent-bit }
+spec:
+  selector:
+    matchLabels: { app: fluent-bit }
+  template:
+    metadata:
+      labels: { app: fluent-bit }
+    spec:
+      serviceAccountName: fluent-bit
+      # Single-node k3s: tolerate the control-plane taint if present so the pod schedules.
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: fluent-bit
+          image: public.ecr.aws/aws-observability/aws-for-fluent-bit:stable
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AWS_REGION
+              value: us-east-1
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: fluent-bit-aws, key: AWS_ACCESS_KEY_ID } }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: fluent-bit-aws, key: AWS_SECRET_ACCESS_KEY } }
+          resources:
+            requests: { cpu: 25m, memory: 48Mi }
+            limits:   { memory: 128Mi }
+          volumeMounts:
+            - name: config
+              mountPath: /fluent-bit/etc/fluent-bit.conf
+              subPath: fluent-bit.conf
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+            - name: flb-state
+              mountPath: /flb-state
+      volumes:
+        - name: config
+          configMap: { name: fluent-bit-config }
+        - name: varlog
+          hostPath: { path: /var/log }
+        # Persist the tail offset across restarts so we don't re-ship the whole file.
+        - name: flb-state
+          hostPath: { path: /var/lib/flb-nuxeo, type: DirectoryOrCreate }
