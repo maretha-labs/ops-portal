@@ -1,3 +1,4 @@
+<img width="1681" height="912" alt="MarethaOpsDashboard_Claude" src="https://github.com/user-attachments/assets/c40c7c6a-84f5-4758-9f17-46e27ad3ee6f" />
 # ops-portal
 
 A small, Google-authenticated web portal that gives a whole team safe hands on a Nuxeo lab:
